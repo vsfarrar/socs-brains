@@ -185,4 +185,12 @@ corr %>%
 
 ```
 
+###Correlation matrix between genes
+
+```{r correlation matrix,echo=FALSE, warning=FALSE, message=FALSE }
+#correlation matrix 
+library(corrplot)
+prl.cor = cor(corr[c(8:12, 21)], method = c("spearman"), use = "complete.obs")
+corrplot(prl.cor, method="number", type="lower", order ="hclust")
+```
 
