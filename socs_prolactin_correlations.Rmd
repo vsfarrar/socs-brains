@@ -2,99 +2,175 @@
 title: "CISH/SOCS - Prolactin Correlations"
 output: html_notebook
 ---
-```{r setup}
-library(tidyverse)
+###Goal:   
+Evaluate whether plasma prolactin levels (determined by RIA) correlate with and predict gene expression of genes downstream from the PRLR in our parental care bird hypothalami.   
 
-#import data
-#"hyp" for hypothalamus gene counts. Data from Rayna from transcriptome parental care study.
-hyp<- read.csv(file="~/Desktop/data/10_hypcandidatecounts.csv")
+**Genes of interest**:   
+*Cytokine-inducible SH protein (CISH)  
+*Suppresor of cytokine signaling (SOCS), isoforms 1 - 5  
 
-#"prl" = prolactin RIA data from Fred Angelier for parental care study birds
-prl<-read.csv(file="~/Desktop/data/prolactin_ria_data.csv")
+```{r data setup, echo=FALSE, warning=FALSE, message=FALSE}
+library(tidyverse) 
+library(robust)# robust regression
+library(car)#Anovas on glmms
+library(lme4) #mixed models 
 
-```
-
-```{r text parsing & join, eval=FALSE, message=FALSE, warning=FALSE, include=FALSE}
-#code from PRLR_MS_full_analyses.Rmd  (HPC crops project) for joins. Used to create a join that I then filled in manually. 
-
-#clean data using stringr
-
-#create a clean_id variable for band combinations in  RNAseq dataset 
-hyp$clean_id<-str_replace_all(hyp$bird, "x", "") #remove meaningless "x" from band combos
-hyp$clean_id<-str_replace_all(hyp$clean_id, "[[:punct:]]", "") #remove punctuation
-
-#create clean_id variable in prolactin RIA dataset
-prl$clean_id<-str_replace_all(prl$ColorBands, "x", "")
-prl$clean_id<-str_replace_all(prl$clean_id,"[[:punct:]]", "" )
-
-
-#join prolactin plasma data with prl.long RNAseq data
-prl.join<-left_join(hyp, prl, by ="clean_id")
-
-#filter the join by those that actually joined 
-
-socs_join<- prl.join %>%
-  filter(!is.na(Prolactin.ng.mL))
-
-#sample size: 
-socs_join %>%
-  group_by(treatment,sex) %>%
-  summarize(n=n())
-```
-
-I manually filled in the gaps in the above join. 
-```{r}
 #filled-in join data ,to be used in correlations = "corr"
 corr<-read.csv(file="~/Desktop/data/socs_prl_join.csv")
 
+corr[corr == 0] <- NA #any gene that is 0, turn to an "NA" for log transformations
+
+corr$treatment <- factor(corr$treatment, levels=c("control", "bldg", "lay", "inc.d3", "inc.d9", "inc.d17",  "hatch", "n5", "n9")) #manual re-order
+
+#sample size
 corr %>%
-  filter(!is.na(Prolactin.ng.mL))%>%
+  filter(!is.na(Prolactin.ng.mL))%>% #filter out any missing prolactin conc data
   group_by(treatment,sex) %>%
   summarize(n=n())
-
 ```
 
+Prolactin data is right-skewed, so I log-transformed data to make it more normal.   
 
-```{r}
-hist(corr$Prolactin.ng.mL) #not particularly normal 
+```{r normality check, echo=FALSE, warning=FALSE, message=FALSE}
+hist(corr$Prolactin.ng.mL, main="Prolactin conc. (ng/mL)") #not particularly normal 
 corr$log_prl <- log(corr$Prolactin.ng.mL)
-hist(corr$log_prl) #better, more normal. 
+hist(corr$log_prl,main="Log(Prolactin conc.)") #better, more normal. 
 
 #all genes look relatively normal - ask Rayna if they are already log transformed?
+```
 
-
-corr[corr == 0] <- NA
-
+```{r cish, echo=FALSE, warning=FALSE, message=FALSE }
+#basic linear model 
 cish_lm<-lm(log(CISH) ~ log_prl + sex, data=corr)
 summary(cish_lm)
+anova(cish_lm)
+shapiro.test(cish_lm$residuals) #incredibly non-normal residuals, using robust regression
 
-cor.test(corr$log_prl, log(corr$CISH), method=c("pearson", "kendall", "spearman"))
+#residual analysis
+cish_stdres = rstandard(cish_lm) #standard residuals for Q-Q plot
+qqnorm(cish_stdres) #QQ plot
+qqline(cish_stdres)
 
-socs1_lm <-lm(log(SOCS1) ~ log_prl + sex, data=corr)
-summary(socs1_lm)
+#robust regression 
+cish_rob<-lmRob(log(CISH) ~ log_prl + sex, data=corr) #still significant 
+summary(cish_rob)
 
-socs2_lm <-lm(log(SOCS2) ~ log_prl + sex, data=corr)
-summary(socs2_lm)
-
-socs4_lm <-lm(log(SOCS4) ~ log_prl + sex, data=corr)
-summary(socs4_lm)
-
-socs5_lm <-lm(log(SOCS5) ~ log_prl + sex, data=corr)
-summary(socs5_lm)
-
-library(robust)
-
-cish_lmRob<-lmRob(log(CISH) ~ log_prl + sex, data=corr)
-summary(cish_lmRob)
-
-p1<-corr %>%
-  #filter(treatment %in% c("n5", "hatch")) %>%
+#plot
+corr %>%
   ggplot( aes(x=log_prl, y=log(CISH), color = treatment))+
   geom_point()+
   geom_smooth(method=lm, na.rm = TRUE, fullrange= TRUE,
-              aes(group=1),colour="black")
-p1
+              aes(group=1),colour="black")+
+  labs(x="log(Prolactin concentration)", y="log(CISH gene counts)")+
+  ggtitle("Hyp. CISH expression predicted by prolactin levels")+
+  scale_color_discrete(name="Parental Stage")+
+  annotate("text", x = 4.5, y = 0.5, label = "R2= 0.15, p< 0.05", size=5)+
+  theme_minimal()
 
-corr$treatment <- factor(corr$treatment, levels=c("control", "bldg", "lay", "inc.d3", "inc.d9", "inc.d17",  "hatch", "n5", "n9")) #manual re-order
 ```
+```{r socs1, echo=FALSE, warning=FALSE, message=FALSE }
+#basic linear model 
+socs1_lm<-lm(log(SOCS1) ~ log_prl + sex, data=corr)
+summary(socs1_lm)
+anova(socs1_lm)
+shapiro.test(socs1_lm$residuals) #incredibly non-normal residuals, using robust regression
+
+#residual analysis
+socs1_stdres = rstandard(socs1_lm) #standard residuals for Q-Q plot
+qqnorm(socs1_stdres) #QQ plot
+qqline(socs1_stdres)
+
+#robust regression 
+socs1_rob<-lmRob(log(SOCS1) ~ log_prl + sex, data=corr) #still significant 
+summary(socs1_rob)
+
+#plot
+corr %>%
+  ggplot( aes(x=log_prl, y=log(SOCS1), color = treatment))+
+  geom_point()+
+  geom_smooth(method=lm, na.rm = TRUE, fullrange= TRUE,
+              aes(group=1),colour="black")+
+  labs(x="log(Prolactin concentration)", y="log(SOCS1 gene counts)")+
+  ggtitle("Hyp. SOCS1 expression weakly predicted by prolactin levels")+
+  scale_color_discrete(name="Parental Stage")+
+  annotate("text", x = 4.5, y = 0.5, label = "R2= 0.020, p< 0.05", size=5)+
+  theme_minimal()
+
+```
+
+```{r socs2, echo=FALSE, warning=FALSE, message=FALSE }
+#basic linear model 
+socs2_lm<-lm(log(SOCS2) ~ log_prl + sex, data=corr)
+summary(socs2_lm)
+anova(socs2_lm)
+shapiro.test(socs2_lm$residuals) #incredibly non-normal residuals, using robust regression
+
+#robust regression 
+socs2_rob<-lmRob(log(SOCS2) ~ log_prl + sex, data=corr) #still significant 
+summary(socs2_rob)
+
+#plot
+corr %>%
+  ggplot( aes(x=log_prl, y=log(SOCS2), color = treatment))+
+  geom_point()+
+  geom_smooth(method=lm, na.rm = TRUE, fullrange= TRUE,
+              aes(group=1),colour="black")+
+  labs(x="log(Prolactin concentration)", y="log(SOCS2 gene counts)")+
+  ggtitle("Hyp. SOCS2 expression weakly predicted by prolactin levels")+
+  scale_color_discrete(name="Parental Stage")+
+  annotate("text", x = 4.5, y = 0.5, label = "R2= 0.04, p< 0.05", size=5)+
+  theme_minimal()
+
+```
+
+```{r socs4, echo=FALSE, warning=FALSE, message=FALSE }
+#basic linear model 
+socs4_lm<-lm(log(SOCS4) ~ log_prl + sex, data=corr)
+summary(socs4_lm)
+anova(socs4_lm)
+shapiro.test(socs4_lm$residuals) #incredibly non-normal residuals, using robust regression
+
+#robust regression 
+socs4_rob<-lmRob(log(SOCS4) ~ log_prl + sex, data=corr) #still significant 
+summary(socs4_rob)
+
+#plot
+corr %>%
+  ggplot( aes(x=log_prl, y=log(SOCS4), color = treatment))+
+  geom_point()+
+  geom_smooth(method=lm, na.rm = TRUE, fullrange= TRUE,
+              aes(group=1),colour="black")+
+  labs(x="log(Prolactin concentration)", y="log(SOCS4 gene counts)")+
+  ggtitle("SOCS4 expression not significantly predicted by prolactin levels")+
+  scale_color_discrete(name="Parental Stage")+
+  annotate("text", x = 4.5, y = 0.5, label = "R2= 0.011, p = 0.31", size=5)+
+  theme_minimal()
+
+```
+
+```{r socs5, echo=FALSE, warning=FALSE, message=FALSE }
+#basic linear model 
+socs5_lm<-lm(log(SOCS5) ~ log_prl + sex, data=corr)
+summary(socs5_lm)
+anova(socs5_lm)
+shapiro.test(socs5_lm$residuals) #incredibly non-normal residuals, using robust regression
+
+#robust regression 
+socs5_rob<-lmRob(log(SOCS5) ~ log_prl + sex, data=corr) #still significant 
+summary(socs5_rob)
+
+#plot
+corr %>%
+  ggplot( aes(x=log_prl, y=log(SOCS5), color = treatment))+
+  geom_point()+
+  geom_smooth(method=lm, na.rm = TRUE, fullrange= TRUE,
+              aes(group=1),colour="black")+
+  labs(x="log(Prolactin concentration)", y="log(SOCS4 gene counts)")+
+  ggtitle("SOCS5 expression not significantly predicted by prolactin levels")+
+  scale_color_discrete(name="Parental Stage")+
+  annotate("text", x = 4.5, y = 0.5, label = "R2= 0.017, p = 0.13", size=5)+
+  theme_minimal()
+
+```
+
 
