@@ -1,0 +1,100 @@
+---
+title: "CISH/SOCS - Prolactin Correlations"
+output: html_notebook
+---
+```{r setup}
+library(tidyverse)
+
+#import data
+#"hyp" for hypothalamus gene counts. Data from Rayna from transcriptome parental care study.
+hyp<- read.csv(file="~/Desktop/data/10_hypcandidatecounts.csv")
+
+#"prl" = prolactin RIA data from Fred Angelier for parental care study birds
+prl<-read.csv(file="~/Desktop/data/prolactin_ria_data.csv")
+
+```
+
+```{r text parsing & join, eval=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+#code from PRLR_MS_full_analyses.Rmd  (HPC crops project) for joins. Used to create a join that I then filled in manually. 
+
+#clean data using stringr
+
+#create a clean_id variable for band combinations in  RNAseq dataset 
+hyp$clean_id<-str_replace_all(hyp$bird, "x", "") #remove meaningless "x" from band combos
+hyp$clean_id<-str_replace_all(hyp$clean_id, "[[:punct:]]", "") #remove punctuation
+
+#create clean_id variable in prolactin RIA dataset
+prl$clean_id<-str_replace_all(prl$ColorBands, "x", "")
+prl$clean_id<-str_replace_all(prl$clean_id,"[[:punct:]]", "" )
+
+
+#join prolactin plasma data with prl.long RNAseq data
+prl.join<-left_join(hyp, prl, by ="clean_id")
+
+#filter the join by those that actually joined 
+
+socs_join<- prl.join %>%
+  filter(!is.na(Prolactin.ng.mL))
+
+#sample size: 
+socs_join %>%
+  group_by(treatment,sex) %>%
+  summarize(n=n())
+```
+
+I manually filled in the gaps in the above join. 
+```{r}
+#filled-in join data ,to be used in correlations = "corr"
+corr<-read.csv(file="~/Desktop/data/socs_prl_join.csv")
+
+corr %>%
+  filter(!is.na(Prolactin.ng.mL))%>%
+  group_by(treatment,sex) %>%
+  summarize(n=n())
+
+```
+
+
+```{r}
+hist(corr$Prolactin.ng.mL) #not particularly normal 
+corr$log_prl <- log(corr$Prolactin.ng.mL)
+hist(corr$log_prl) #better, more normal. 
+
+#all genes look relatively normal - ask Rayna if they are already log transformed?
+
+
+corr[corr == 0] <- NA
+
+cish_lm<-lm(log(CISH) ~ log_prl + sex, data=corr)
+summary(cish_lm)
+
+cor.test(corr$log_prl, log(corr$CISH), method=c("pearson", "kendall", "spearman"))
+
+socs1_lm <-lm(log(SOCS1) ~ log_prl + sex, data=corr)
+summary(socs1_lm)
+
+socs2_lm <-lm(log(SOCS2) ~ log_prl + sex, data=corr)
+summary(socs2_lm)
+
+socs4_lm <-lm(log(SOCS4) ~ log_prl + sex, data=corr)
+summary(socs4_lm)
+
+socs5_lm <-lm(log(SOCS5) ~ log_prl + sex, data=corr)
+summary(socs5_lm)
+
+library(robust)
+
+cish_lmRob<-lmRob(log(CISH) ~ log_prl + sex, data=corr)
+summary(cish_lmRob)
+
+p1<-corr %>%
+  #filter(treatment %in% c("n5", "hatch")) %>%
+  ggplot( aes(x=log_prl, y=log(CISH), color = treatment))+
+  geom_point()+
+  geom_smooth(method=lm, na.rm = TRUE, fullrange= TRUE,
+              aes(group=1),colour="black")
+p1
+
+corr$treatment <- factor(corr$treatment, levels=c("control", "bldg", "lay", "inc.d3", "inc.d9", "inc.d17",  "hatch", "n5", "n9")) #manual re-order
+```
+
