@@ -1,13 +1,15 @@
 ---
 title: "CISH/SOCS - Prolactin Correlations"
-output: html_notebook
+output:
+  html_document:
+    df_print: paged
 ---
 ###Goal:   
 Evaluate whether plasma prolactin levels (determined by RIA) correlate with and predict gene expression of genes downstream from the PRLR in our parental care bird hypothalami.   
 
 **Genes of interest**:   
-*Cytokine-inducible SH protein (CISH)  
-*Suppresor of cytokine signaling (SOCS), isoforms 1 - 5  
+* Cytokine-inducible SH protein (CISH)  
+* Suppresor of cytokine signaling (SOCS), isoforms 1 - 5  
 
 ```{r data setup, echo=FALSE, warning=FALSE, message=FALSE}
 library(tidyverse) 
@@ -38,11 +40,12 @@ hist(corr$log_prl,main="Log(Prolactin conc.)") #better, more normal.
 
 #all genes look relatively normal - ask Rayna if they are already log transformed?
 ```
+###CISH
 
 ```{r cish, echo=FALSE, warning=FALSE, message=FALSE }
 #basic linear model 
 cish_lm<-lm(log(CISH) ~ log_prl + sex, data=corr)
-summary(cish_lm)
+#summary(cish_lm)
 anova(cish_lm)
 shapiro.test(cish_lm$residuals) #incredibly non-normal residuals, using robust regression
 
@@ -68,10 +71,13 @@ corr %>%
   theme_minimal()
 
 ```
+
+###SOCS1
+
 ```{r socs1, echo=FALSE, warning=FALSE, message=FALSE }
 #basic linear model 
 socs1_lm<-lm(log(SOCS1) ~ log_prl + sex, data=corr)
-summary(socs1_lm)
+#summary(socs1_lm)
 anova(socs1_lm)
 shapiro.test(socs1_lm$residuals) #incredibly non-normal residuals, using robust regression
 
@@ -98,10 +104,12 @@ corr %>%
 
 ```
 
+###SOCS2
+
 ```{r socs2, echo=FALSE, warning=FALSE, message=FALSE }
 #basic linear model 
 socs2_lm<-lm(log(SOCS2) ~ log_prl + sex, data=corr)
-summary(socs2_lm)
+#summary(socs2_lm)
 anova(socs2_lm)
 shapiro.test(socs2_lm$residuals) #incredibly non-normal residuals, using robust regression
 
@@ -123,10 +131,12 @@ corr %>%
 
 ```
 
+###SOCS4 
+
 ```{r socs4, echo=FALSE, warning=FALSE, message=FALSE }
 #basic linear model 
 socs4_lm<-lm(log(SOCS4) ~ log_prl + sex, data=corr)
-summary(socs4_lm)
+#summary(socs4_lm)
 anova(socs4_lm)
 shapiro.test(socs4_lm$residuals) #incredibly non-normal residuals, using robust regression
 
@@ -148,10 +158,12 @@ corr %>%
 
 ```
 
+###SOCS5
+
 ```{r socs5, echo=FALSE, warning=FALSE, message=FALSE }
 #basic linear model 
 socs5_lm<-lm(log(SOCS5) ~ log_prl + sex, data=corr)
-summary(socs5_lm)
+#summary(socs5_lm)
 anova(socs5_lm)
 shapiro.test(socs5_lm$residuals) #incredibly non-normal residuals, using robust regression
 
