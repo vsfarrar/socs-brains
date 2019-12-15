@@ -10,6 +10,8 @@ library(ggsignif)
 library(cowplot)
 library(effsize) #effect sizes and cohen's d
 library(stringr) #sample name cleanup
+library(robust) #lmRob
+
 cq<-read.csv("~/Desktop/data/2019-12-13_full_PRLvsHPG_POA_PVN_qPCR_data.csv", header=TRUE) #uncleaned data
 samp<-read.csv(file="~/Desktop/data/PRLvsHPG_sample_key.csv") #Sample data with sex and stage, will be used for joins later
 
@@ -98,17 +100,16 @@ qpcr_dat <- qpcr_dat %>% drop_na(sex) #drops 1 bird (615) that does not have inf
 ```
 
 ```{r ddct / fold change}
-#NOTE: THIS CODE DOES NOT DIFFERENTIATE NUCLEI 
 
 #calculate dct for CISH/SOCS with new reference genes 
 qpcr_dat$dct_cish<- (qpcr_dat$CISH - qpcr_dat$ref_gene) #delta CT CISH
 qpcr_dat$dct_socs1<- (qpcr_dat$SOCS1 - qpcr_dat$ref_gene) #delta CT SOCS1
 qpcr_dat$dct_socs2<- (qpcr_dat$SOCS2 - qpcr_dat$ref_gene) #delta CT SOCS2
 
-#control (? DO I NEED TO DIFFERENTIATE NUCLEI HERE?)
-control_cish<-mean(qpcr_dat$dct_cish[qpcr_dat$treatment=="vehicle"], na.rm = TRUE)
-control_socs1<-mean(qpcr_dat$dct_socs1[qpcr_dat$treatment=="vehicle"], na.rm = TRUE)
-control_socs2<-mean(qpcr_dat$dct_socs2[qpcr_dat$treatment=="vehicle"], na.rm = TRUE)
+#control (control is vehicle POA) 
+control_cish<-mean(qpcr_dat$dct_cish[qpcr_dat$treatment=="vehicle" & qpcr_dat$nuclei == "POA"], na.rm = TRUE)
+control_socs1<-mean(qpcr_dat$dct_socs1[qpcr_dat$treatment=="vehicle" & qpcr_dat$nuclei == "POA"], na.rm = TRUE)
+control_socs2<-mean(qpcr_dat$dct_socs2[qpcr_dat$treatment=="vehicle" & qpcr_dat$nuclei == "POA"], na.rm = TRUE)
 
 #delta delta Ct 
 qpcr_dat$ddct_cish<- (qpcr_dat$dct_cish - control_cish)
@@ -122,36 +123,41 @@ qpcr_dat$fold_socs2<-2^-(qpcr_dat$ddct_socs2)
 
 ```
 
-```{r GnIH-R}
-#plot histogram of fold changes
-hist(poa_dat$fold_gnihr)
-hist(-(poa_dat$ddct_gnihr))
+```{r CISH}
 #log transform if non-normal
-poa_dat$log_gnihr<-log2(poa_dat$fold_gnihr)
-hist(poa_dat$log_gnihr) #more normalish
-#plot sex by treatment 
+qpcr_dat$log_cish<-log2(qpcr_dat$fold_cish)
+hist(qpcr_dat$fold_cish)
+hist(qpcr_dat$log_cish) #more normal
 
-ggplot(poa_dat, aes(x=treatment, y=log_gnihr,color=sex)) +
-  geom_point(aes(shape=sex),position=position_jitter(width=0.1), size = 4)+
+#plot nuclei by treatment
+
+ggplot(qpcr_dat, aes(x=treatment, y=log_cish, fill = nuclei)) +
   #geom_text(aes(label = bird_id))+
-  geom_boxplot(alpha=0.25, color="black")+
-  scale_color_manual(values=c("purple", "orange"))+
-  scale_x_discrete(labels=c("vehicle\n(6f:4m)", "PRL\n(9f:9m)"))+
-  geom_signif(comparisons=list(c("vehicle", "PRL")), annotations="d= 0.55, n.s.",
-              y_position = 5, tip_length = 0.05, vjust = 0, color="black", textsize = 5 )+
-  labs(x= NULL, y="GnIH-R relative expression \n(log fold change)")+
-  ylim(values=c(-5,5))+
+  geom_point(aes(shape = nuclei, color = nuclei), position = position_jitterdodge(), fill = "black", size = 4)+
+  geom_boxplot(alpha=0.25, color="black",  outlier.shape = NA)+
+  scale_color_manual(values=c("gray70", "gray40"))+
+  scale_fill_manual(values=c("white", "gray40"))+
+  scale_x_discrete(labels=c("vehicle", "PRL"))+
+  geom_signif(annotations = "PVN: p = 0.05", color = "black", textsize = 5,
+              y_position = 5.5, xmin=1.2, xmax=2.2, tip_length = 0, vjust = 0 )+ 
+  geom_signif(annotations = "POA: n.s.", color = "black", textsize = 5,
+              y_position = 4.5, xmin=0.8, xmax=1.8, tip_length = 0, vjust = 0 )+
+  labs(x= NULL, y="CISH relative expression \n(log fold change)")+
+  #ylim(values=c(-5,5))+
   theme_classic()+ 
-  theme(text = element_text(size=24), axis.text.x = element_text(size=16), legend.position = "none")
+  theme(text = element_text(size=12), axis.text.x = element_text(size=12))
 
-#model for gnih
-m_gnihr<-lm(log_gnihr~treatment+sex, poa_dat)
-anova(m_gnihr)
-summary(m_gnihr) #not significant
+#model for cish
+m_cish<-lm(log_cish~treatment*nuclei, qpcr_dat)
+anova(m_cish)
+summary(m_cish) #not significant
 
-shapiro.test(m_gnihr$residuals) #normal residuals, no need for lmRob
+shapiro.test(m_cish$residuals) #NON-NORMAL RESIDUALS 
 
-cohen.d.formula(log_gnihr ~ treatment, data=poa_dat) #cohen's d CI overlaps with 0, indicating no sig effect
+#robust model for cish
+rob_cish<-lmRob(log_cish ~ treatment * nuclei, qpcr_dat)
+anova.lmRob(rob_cish) #significant interaction between treatment and nuclei
+summary(rob_cish) #where PVN sig. higher expression.
 
 ```
 
