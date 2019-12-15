@@ -161,3 +161,64 @@ summary(rob_cish) #where PVN sig. higher expression.
 
 ```
 
+```{r SOCS1}
+#log transform if non-normal
+qpcr_dat$log_socs1<-log2(qpcr_dat$fold_socs1)
+hist(qpcr_dat$fold_socs1)
+hist(qpcr_dat$log_socs1) # normal-ish
+
+#plot nuclei by treatment
+
+ggplot(qpcr_dat, aes(x=treatment, y=log_socs1, fill = nuclei)) +
+  #geom_text(aes(label = bird_id))+
+  geom_point(aes(shape = nuclei, color = nuclei), position = position_jitterdodge(), fill = "black", size = 4)+
+  geom_boxplot(alpha=0.25, color="black",  outlier.shape = NA)+
+  scale_color_manual(values=c("gray70", "gray40"))+
+  scale_fill_manual(values=c("white", "gray40"))+
+  scale_x_discrete(labels=c("vehicle", "PRL"))+
+  labs(x= NULL, y="SOCS1 relative expression \n(log fold change)")+
+  #ylim(values=c(-5,5))+
+  theme_classic()+ 
+  theme(text = element_text(size=12), axis.text.x = element_text(size=12))
+
+#model for socs1
+m_socs1<-lm(log_socs1~treatment*nuclei, qpcr_dat)
+anova(m_socs1)
+summary(m_socs1) #sig effect of nuclei, but not treatment w/ prl 
+
+shapiro.test(m_socs1$residuals) #residuals normal
+```
+
+```{r SOCS2}
+#log transform if non-normal
+qpcr_dat$log_socs2<-log2(qpcr_dat$fold_socs2)
+hist(qpcr_dat$fold_socs2)
+hist(qpcr_dat$log_socs2) # normal-ish
+
+#plot nuclei by treatment
+
+ggplot(qpcr_dat, aes(x=treatment, y=log_socs2, fill = nuclei)) +
+  #geom_text(aes(label = bird_id))+
+  geom_point(aes(shape = nuclei, color = nuclei), position = position_jitterdodge(), fill = "black", size = 4)+
+  geom_boxplot(alpha=0.25, color="black",  outlier.shape = NA)+
+  scale_color_manual(values=c("gray70", "gray40"))+
+  scale_fill_manual(values=c("white", "gray40"))+
+  scale_x_discrete(labels=c("vehicle", "PRL"))+
+  labs(x= NULL, y="SOCS1 relative expression \n(log fold change)")+
+  #ylim(values=c(-5,5))+
+  theme_classic()+ 
+  theme(text = element_text(size=12), axis.text.x = element_text(size=12))
+
+#model for socs2
+m_socs2<-lm(log_socs2~treatment*nuclei, qpcr_dat)
+anova(m_socs2)
+summary(m_socs2) #no sig effects
+
+shapiro.test(m_socs2$residuals) #residuals sig NON-normal
+
+#robust model for socs2
+rob_socs2<-lmRob(log_socs2 ~ treatment * nuclei, qpcr_dat)
+anova.lmRob(rob_socs2) #no significant effects
+summary(rob_socs2) 
+```
+
