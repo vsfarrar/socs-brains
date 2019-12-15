@@ -10,7 +10,7 @@ library(ggsignif)
 library(cowplot)
 library(effsize) #effect sizes and cohen's d
 library(stringr) #sample name cleanup
-cq<-read.csv("~/Desktop/data/2019-12-13_PRLvsHPG_POA_qPCR_data.csv", header=TRUE) #uncleaned data
+cq<-read.csv("~/Desktop/data/2019-12-13_full_PRLvsHPG_POA_PVN_qPCR_data.csv", header=TRUE) #uncleaned data
 samp<-read.csv(file="~/Desktop/data/PRLvsHPG_sample_key.csv") #Sample data with sex and stage, will be used for joins later
 
 #data cleanup
@@ -18,31 +18,59 @@ samp$bird_id<-as.factor(samp$bird_id)
 cq$sample<-as.character(cq$sample)
 cq$sample<-str_remove(cq$sample, "ROPI_") #remove ROPI_ prefix from sample names to make uniform
 colnames(cq)[3]<- "bird_id"  #rename sample to bird_id for join 
+
+
+cq <-separate(data = cq, col = bird_id, into = c("bird_id", "nuclei"), sep = "_") #error here will be for H2O wells
+
+cq$gene <-as.factor(cq$gene)
+cq$bird_id <-as.factor(cq$bird_id)
+cq$nuclei <-as.factor(cq$nuclei)
+
+#sample size check 
+cq %>%
+  group_by(gene,nuclei) %>%
+  drop_na(nuclei)%>%
+  summarize(n= length(unique(bird_id)))
 ```
 
 ```{r triplicate cleanup}
 #GOAL: to remove triplicates that are distant from the mean in those sample:gene combos that have a standard deviation > 1 in the triplicates 
-
 cq_clean<- cq %>%
-  group_by(bird_id, gene)%>%
-  mutate(mean_cq = mean(cq), #average cq value across triplicates
-         sd_cq = sd(cq), #sd across triplicates
-         dist_mean = abs(cq - mean(cq))) %>% #for each sample, distance from mean cq
-  ungroup() %>%
-  filter(sd_cq > 1) %>% #look at samples in triplicates w/ sd > 1
-  group_by(bird_id, gene) %>%
-  mutate( new_cq =  ifelse(dist_mean == max(dist_mean), NA, cq)) %>% 
-  #if the distance from the mean is largest of the triplicate, remove that cq value, otherwise keep the cq value
-  ungroup() 
+  drop_na(nuclei) %>%
+  group_by(bird_id, nuclei, gene)%>%
+  mutate(mean_cq = mean(cq, na.rm = TRUE), #average cq value across triplicates
+         sd_cq = sd(cq, na.rm = TRUE), #sd across triplicates
+         dist_mean = abs(cq - mean(cq))) %>% #for each sample, distance from mean cq 
+  ungroup()
+  
+large_sd <- cq_clean %>%
+  filter(sd_cq >1) %>%
+  group_by(bird_id, nuclei, gene) %>%
+  mutate(new_cq = ifelse(dist_mean == max(dist_mean), NA, cq)) %>%
+  ungroup()
+  
+small_sd <- cq_clean %>%
+  filter(sd_cq < 1) %>%
+  group_by(bird_id, nuclei, gene) %>%
+  mutate(new_cq = cq)
+
+cq_clean_2<-rbind.data.frame(large_sd, small_sd)
+
+#sample size checks
+cq_clean %>%
+  group_by(gene,nuclei) %>%
+  summarize(n= length(unique(bird_id)))
+
+cq_clean_2 %>%
+  group_by(gene,nuclei) %>%
+  summarize(n= length(unique(bird_id)))
 ```
 
 ```{r sample averages }
-#calculate averages for each sample
-
-cq_clean<-separate(data = cq_clean, col = bird_id, into = c("bird_id", "nuclei"), sep = "_") #error here will be for H2O wells
+#calculate averages for each sample:nuclei combo
 
 #using the unjoined data file, collapse mean across each triplicate. 
-cq_dat<- cq_clean %>%
+cq_dat<- cq_clean_2 %>%
     group_by(bird_id, nuclei, gene) %>% 
     summarise(mean_cq = mean(new_cq, na.rm = TRUE),
               sd_cq = sd(new_cq, na.rm=TRUE)) 
@@ -50,84 +78,47 @@ cq_dat<- cq_clean %>%
 mean(cq_dat$sd_cq, na.rm=TRUE) #average sd 
 
 #produce wide dataframe where each gene is a column
-cq_wide<-cq_dat %>%
-  group_by(bird_id, nuclei) %>%
-  spread(gene, mean_cq)%>%
+cq_wide <- cq_dat %>%
   select(-sd_cq) %>%
-  group_by(bird_id, nuclei)%>%
-  summarise_all(funs(toString(na.omit(.))))
+  pivot_wider(names_from = gene, values_from = mean_cq)
+```
 
-#format cleanup for the wide dataframe
-cq_wide[cq_wide == ""] <- NA #change blanks back to NAs.
-cq_wide$bird_id<-as.factor(cq_wide$bird_id)
-cq_wide<-cq_wide %>% mutate_if(is.character,as.numeric) #change to numbers, rather than characters
-
+```{r ref genes and join}
 #ref_gene calculation
 #mean is not that different from geometric mean for two numbers
 cq_wide$ref_gene <- rowMeans(cq_wide[c('GAPDH', 'HPRT1')], na.rm=TRUE) 
 
 #join to get treatment and sex data 
-cq_wide$bird_id<-as.factor(cq_wide$bird_id) #need to convert to factor for join
-poa_dat<-left_join(cq_wide, samp)
+qpcr_dat<-left_join(cq_wide, samp)
 
-#remove NA treatments (H2O wells)
-poa_dat<- poa_dat %>% drop_na(treatment) 
+qpcr_dat$treatment<-factor(qpcr_dat$treatment, levels=c("vehicle","PRL")) #manually re-orders stages
+qpcr_dat$bird_id<-as.factor(qpcr_dat$bird_id) #bird_id back to factor 
 
-poa_dat$treatment<-factor(poa_dat$treatment, levels=c("vehicle","PRL")) #manually re-orders stages
-poa_dat$bird_id<-as.factor(poa_dat$bird_id) #bird_id back to factor 
-
-poa_dat[poa_dat == ""] <- NA
-poa_dat <- poa_dat %>% drop_na(sex)
-```
-
-```{r refgene assessment}
-#does either reference gene vary with treatment group or sex?
-
-#GAPDH assessment 
-ggplot(poa_dat, aes(x=treatment, y=GAPDH, fill=sex)) + 
-  geom_boxplot()+ 
-  geom_signif(comparisons = list(c("vehicle","PRL")), map_signif_level = TRUE)
-
-m_gapdh<-lm(GAPDH~treatment+sex, poa_dat)
-anova(m_gapdh) #no significant effect of sex or treatment on GAPDH = SUCCESSFUL REFERENCE GENE! 
-
-#HPRT1 assesment
-ggplot(poa_dat, aes(x=treatment, y=HPRT1, fill=sex)) + 
-  geom_boxplot()+ 
-  geom_signif(comparisons = list(c("vehicle","PRL")), map_signif_level = TRUE)
-
-m_hprt1<-lm(HPRT1~treatment+sex, poa_dat)
-summary(m_hprt1) #no significant effect of sex or treatment on HPRT1 = SUCCESSFUL REFERENCE! 
-
-#for good measure, testing reference gene average
-ggplot(poa_dat, aes(x=treatment, y=ref_gene, fill=sex)) + 
-  geom_boxplot()+ 
-  geom_point(position = position_dodge(0.9))+
-  geom_signif(comparisons = list(c("vehicle","PRL")), map_signif_level = TRUE)
-
-m_refgene<-lm(ref_gene~treatment+sex, poa_dat)
-summary(m_refgene) #average does not vary with sex or treatment 
-
-#New Reference genes are stable 
+qpcr_dat <- qpcr_dat %>% drop_na(sex) #drops 1 bird (615) that does not have information
 ```
 
 ```{r ddct / fold change}
+#NOTE: THIS CODE DOES NOT DIFFERENTIATE NUCLEI 
 
-#calculate dct with new reference genes 
-poa_dat$dct_gnihr<- (poa_dat$GnIHR - poa_dat$ref_gene) #delta CT GnIHR
-poa_dat$dct_gnrh<- (poa_dat$GnRH - poa_dat$ref_gene) #delta CT GnRH
+#calculate dct for CISH/SOCS with new reference genes 
+qpcr_dat$dct_cish<- (qpcr_dat$CISH - qpcr_dat$ref_gene) #delta CT CISH
+qpcr_dat$dct_socs1<- (qpcr_dat$SOCS1 - qpcr_dat$ref_gene) #delta CT SOCS1
+qpcr_dat$dct_socs2<- (qpcr_dat$SOCS2 - qpcr_dat$ref_gene) #delta CT SOCS2
 
-#control
-control_gnihr<-mean(poa_dat$dct_gnihr[poa_dat$treatment=="vehicle"], na.rm = TRUE)
-control_gnrh<-mean(poa_dat$dct_gnrh[poa_dat$treatment=="vehicle"], na.rm = TRUE)
+#control (? DO I NEED TO DIFFERENTIATE NUCLEI HERE?)
+control_cish<-mean(qpcr_dat$dct_cish[qpcr_dat$treatment=="vehicle"], na.rm = TRUE)
+control_socs1<-mean(qpcr_dat$dct_socs1[qpcr_dat$treatment=="vehicle"], na.rm = TRUE)
+control_socs2<-mean(qpcr_dat$dct_socs2[qpcr_dat$treatment=="vehicle"], na.rm = TRUE)
 
 #delta delta Ct 
-poa_dat$ddct_gnihr<- (poa_dat$dct_gnihr - control_gnihr)
-poa_dat$ddct_gnrh<- (poa_dat$dct_gnrh - control_gnrh)
+qpcr_dat$ddct_cish<- (qpcr_dat$dct_cish - control_cish)
+qpcr_dat$ddct_socs1<- (qpcr_dat$dct_socs1 - control_socs1)
+qpcr_dat$ddct_socs2<- (qpcr_dat$dct_socs2 - control_socs2)
 
 #fold change
-poa_dat$fold_gnihr<-2^-(poa_dat$ddct_gnihr)
-poa_dat$fold_gnrh<-2^-(poa_dat$ddct_gnrh)
+qpcr_dat$fold_cish<-2^-(qpcr_dat$ddct_cish)
+qpcr_dat$fold_socs1<-2^-(qpcr_dat$ddct_socs1)
+qpcr_dat$fold_socs2<-2^-(qpcr_dat$ddct_socs2)
 
 ```
 
