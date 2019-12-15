@@ -1,0 +1,166 @@
+---
+title: "CISH, SOCS gene expression for PRLvsHPG birds"
+author: "Victoria Farrar"
+date: "12/15/2019"
+output: html_document
+---
+```{r setup}
+library(tidyverse)
+library(ggsignif)
+library(cowplot)
+library(effsize) #effect sizes and cohen's d
+library(stringr) #sample name cleanup
+cq<-read.csv("~/Desktop/data/2019-12-13_PRLvsHPG_POA_qPCR_data.csv", header=TRUE) #uncleaned data
+samp<-read.csv(file="~/Desktop/data/PRLvsHPG_sample_key.csv") #Sample data with sex and stage, will be used for joins later
+
+#data cleanup
+samp$bird_id<-as.factor(samp$bird_id)
+cq$sample<-as.character(cq$sample)
+cq$sample<-str_remove(cq$sample, "ROPI_") #remove ROPI_ prefix from sample names to make uniform
+colnames(cq)[3]<- "bird_id"  #rename sample to bird_id for join 
+```
+
+```{r triplicate cleanup}
+#GOAL: to remove triplicates that are distant from the mean in those sample:gene combos that have a standard deviation > 1 in the triplicates 
+
+cq_clean<- cq %>%
+  group_by(bird_id, gene)%>%
+  mutate(mean_cq = mean(cq), #average cq value across triplicates
+         sd_cq = sd(cq), #sd across triplicates
+         dist_mean = abs(cq - mean(cq))) %>% #for each sample, distance from mean cq
+  ungroup() %>%
+  filter(sd_cq > 1) %>% #look at samples in triplicates w/ sd > 1
+  group_by(bird_id, gene) %>%
+  mutate( new_cq =  ifelse(dist_mean == max(dist_mean), NA, cq)) %>% 
+  #if the distance from the mean is largest of the triplicate, remove that cq value, otherwise keep the cq value
+  ungroup() 
+```
+
+```{r sample averages }
+#calculate averages for each sample
+
+cq_clean<-separate(data = cq_clean, col = bird_id, into = c("bird_id", "nuclei"), sep = "_") #error here will be for H2O wells
+
+#using the unjoined data file, collapse mean across each triplicate. 
+cq_dat<- cq_clean %>%
+    group_by(bird_id, nuclei, gene) %>% 
+    summarise(mean_cq = mean(new_cq, na.rm = TRUE),
+              sd_cq = sd(new_cq, na.rm=TRUE)) 
+
+mean(cq_dat$sd_cq, na.rm=TRUE) #average sd 
+
+#produce wide dataframe where each gene is a column
+cq_wide<-cq_dat %>%
+  group_by(bird_id, nuclei) %>%
+  spread(gene, mean_cq)%>%
+  select(-sd_cq) %>%
+  group_by(bird_id, nuclei)%>%
+  summarise_all(funs(toString(na.omit(.))))
+
+#format cleanup for the wide dataframe
+cq_wide[cq_wide == ""] <- NA #change blanks back to NAs.
+cq_wide$bird_id<-as.factor(cq_wide$bird_id)
+cq_wide<-cq_wide %>% mutate_if(is.character,as.numeric) #change to numbers, rather than characters
+
+#ref_gene calculation
+#mean is not that different from geometric mean for two numbers
+cq_wide$ref_gene <- rowMeans(cq_wide[c('GAPDH', 'HPRT1')], na.rm=TRUE) 
+
+#join to get treatment and sex data 
+cq_wide$bird_id<-as.factor(cq_wide$bird_id) #need to convert to factor for join
+poa_dat<-left_join(cq_wide, samp)
+
+#remove NA treatments (H2O wells)
+poa_dat<- poa_dat %>% drop_na(treatment) 
+
+poa_dat$treatment<-factor(poa_dat$treatment, levels=c("vehicle","PRL")) #manually re-orders stages
+poa_dat$bird_id<-as.factor(poa_dat$bird_id) #bird_id back to factor 
+
+poa_dat[poa_dat == ""] <- NA
+poa_dat <- poa_dat %>% drop_na(sex)
+```
+
+```{r refgene assessment}
+#does either reference gene vary with treatment group or sex?
+
+#GAPDH assessment 
+ggplot(poa_dat, aes(x=treatment, y=GAPDH, fill=sex)) + 
+  geom_boxplot()+ 
+  geom_signif(comparisons = list(c("vehicle","PRL")), map_signif_level = TRUE)
+
+m_gapdh<-lm(GAPDH~treatment+sex, poa_dat)
+anova(m_gapdh) #no significant effect of sex or treatment on GAPDH = SUCCESSFUL REFERENCE GENE! 
+
+#HPRT1 assesment
+ggplot(poa_dat, aes(x=treatment, y=HPRT1, fill=sex)) + 
+  geom_boxplot()+ 
+  geom_signif(comparisons = list(c("vehicle","PRL")), map_signif_level = TRUE)
+
+m_hprt1<-lm(HPRT1~treatment+sex, poa_dat)
+summary(m_hprt1) #no significant effect of sex or treatment on HPRT1 = SUCCESSFUL REFERENCE! 
+
+#for good measure, testing reference gene average
+ggplot(poa_dat, aes(x=treatment, y=ref_gene, fill=sex)) + 
+  geom_boxplot()+ 
+  geom_point(position = position_dodge(0.9))+
+  geom_signif(comparisons = list(c("vehicle","PRL")), map_signif_level = TRUE)
+
+m_refgene<-lm(ref_gene~treatment+sex, poa_dat)
+summary(m_refgene) #average does not vary with sex or treatment 
+
+#New Reference genes are stable 
+```
+
+```{r ddct / fold change}
+
+#calculate dct with new reference genes 
+poa_dat$dct_gnihr<- (poa_dat$GnIHR - poa_dat$ref_gene) #delta CT GnIHR
+poa_dat$dct_gnrh<- (poa_dat$GnRH - poa_dat$ref_gene) #delta CT GnRH
+
+#control
+control_gnihr<-mean(poa_dat$dct_gnihr[poa_dat$treatment=="vehicle"], na.rm = TRUE)
+control_gnrh<-mean(poa_dat$dct_gnrh[poa_dat$treatment=="vehicle"], na.rm = TRUE)
+
+#delta delta Ct 
+poa_dat$ddct_gnihr<- (poa_dat$dct_gnihr - control_gnihr)
+poa_dat$ddct_gnrh<- (poa_dat$dct_gnrh - control_gnrh)
+
+#fold change
+poa_dat$fold_gnihr<-2^-(poa_dat$ddct_gnihr)
+poa_dat$fold_gnrh<-2^-(poa_dat$ddct_gnrh)
+
+```
+
+```{r GnIH-R}
+#plot histogram of fold changes
+hist(poa_dat$fold_gnihr)
+hist(-(poa_dat$ddct_gnihr))
+#log transform if non-normal
+poa_dat$log_gnihr<-log2(poa_dat$fold_gnihr)
+hist(poa_dat$log_gnihr) #more normalish
+#plot sex by treatment 
+
+ggplot(poa_dat, aes(x=treatment, y=log_gnihr,color=sex)) +
+  geom_point(aes(shape=sex),position=position_jitter(width=0.1), size = 4)+
+  #geom_text(aes(label = bird_id))+
+  geom_boxplot(alpha=0.25, color="black")+
+  scale_color_manual(values=c("purple", "orange"))+
+  scale_x_discrete(labels=c("vehicle\n(6f:4m)", "PRL\n(9f:9m)"))+
+  geom_signif(comparisons=list(c("vehicle", "PRL")), annotations="d= 0.55, n.s.",
+              y_position = 5, tip_length = 0.05, vjust = 0, color="black", textsize = 5 )+
+  labs(x= NULL, y="GnIH-R relative expression \n(log fold change)")+
+  ylim(values=c(-5,5))+
+  theme_classic()+ 
+  theme(text = element_text(size=24), axis.text.x = element_text(size=16), legend.position = "none")
+
+#model for gnih
+m_gnihr<-lm(log_gnihr~treatment+sex, poa_dat)
+anova(m_gnihr)
+summary(m_gnihr) #not significant
+
+shapiro.test(m_gnihr$residuals) #normal residuals, no need for lmRob
+
+cohen.d.formula(log_gnihr ~ treatment, data=poa_dat) #cohen's d CI overlaps with 0, indicating no sig effect
+
+```
+
