@@ -36,3 +36,4 @@ vignettes/*.pdf
 *.knit.md
 socs_prolactin_correlations.html
 socs_prolactin_correlations.nb.html
+SOCS_CISH_MCMCqpcr_analysis.nb.html
